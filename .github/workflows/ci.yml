@@ -26,6 +26,11 @@ jobs:
         run: |
           cd build/ci_cd_projeto/backend
           zip -r backend.zip dist
+      - name: Upload Zip Backend
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend
+          path: build/ci_cd_projeto/backend/backend.zip
   build_front:
     name: Build Front
     runs-on: ubuntu-latest
@@ -46,16 +51,29 @@ jobs:
         run: |
           cd build/ci_cd_projeto/frontend
           zip -r frontend.zip dist
+      - name: Upload Zip Frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend
+          path: build/ci_cd_projeto/frontend/frontend.zip
   empacotar:
     name: Empacotar
     needs: [build_back, build_front]
     runs-on: ubuntu-latest
     steps:
-     - name: Criar Versão / Release e Tag
-       uses: softprops/action-gh-release@v2
-       env:
+      - name: Download Zip Frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend
+      - name: Download Zip Backend
+        uses: actions/download-artifact@v4
+        with:
+         name: backend
+      - name: Criar Versão / Release e Tag
+        uses: softprops/action-gh-release@v2
+        env:
          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-       with:
+        with:
          body: Release
          tag_name: Release
          fail_on_unmatched_files: false
