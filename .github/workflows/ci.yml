@@ -1,20 +1,20 @@
-
 name: CI - Snapshot
 run-name: CI snapshot disparada por ${{ github.actor }}
 
 on:
-  # inicia o workflow manualmente
   workflow_dispatch:
     inputs:
-        tipo_versao:
-          type: choice
-          description: 'Tipo de build'     
-          required: true
-          default: 'minor'
-          options:
-          - patch
-          - minor
-          - major
+      tipo_versao:
+        type: choice
+        description: 'Tipo de build'
+        required: true
+        default: 'snapshot'
+        options:
+        - snapshot
+        - patch
+        - minor
+        - major
+
 jobs:
   GerarVersao:
     runs-on: ubuntu-latest
@@ -25,6 +25,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      
       - name: Coleta última versão
         id: ultimatag
         uses: "WyriHaximus/github-action-get-previous-tag@v1"
@@ -32,24 +33,26 @@ jobs:
           fallback: 1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
       - name: Número próximas versões
         id: versoes
         uses: "WyriHaximus/github-action-next-semvers@v1"
         with:
           version: ${{ steps.ultimatag.outputs.tag }}
+      
       - name: Versão
         id: versao
         shell: sh
         run: |
           versao=$(
-            case "${{ inputs.tipo_versao }}" in
-              ("patch") echo "${{ steps.versoes.outputs.patch }}" ;;
-              ("minor") echo "${{ steps.versoes.outputs.minor }}" ;;
-              ("major") echo "${{ steps.versoes.outputs.major }}" ;;
-              ("replace_last") echo "${{ steps.ultimatag.outputs.tag }}" ;;
-              ("snapshot") echo "${{ steps.versoes.outputs.minor }}.${{ github.ref_name }}.snapshot" ;;
-              (*) echo "${{ steps.versoes.outputs.minor }}.snapshot" ;;
-            esac)
+          case "${{ inputs.tipo_versao }}" in
+            ("patch") echo "${{ steps.versoes.outputs.patch }}" ;;
+            ("minor") echo "${{ steps.versoes.outputs.minor }}" ;;
+            ("major") echo "${{ steps.versoes.outputs.major }}" ;;
+            ("replace_last") echo "${{ steps.ultimatag.outputs.tag }}" ;;
+            ("snapshot") echo "${{ steps.versoes.outputs.minor }}.${{ github.ref_name }}.snapshot" ;;
+            (*) echo "${{ steps.versoes.outputs.minor }}.snapshot" ;;
+          esac)
           echo "--- Versões ---"
           echo "snapshot=${{ steps.versoes.outputs.minor }}.snapshot"
           echo "patch=${{ steps.versoes.outputs.patch }}"
@@ -59,6 +62,7 @@ jobs:
           echo "--- Versão escolhida ---"
           echo "versao=${versao}"
           echo "versao=${versao}" >> "$GITHUB_OUTPUT"
+
   build_back:
     name: Build Back
     needs: [GerarVersao]
@@ -69,22 +73,26 @@ jobs:
         with:
           repository: ${{ github.repository }}
           path: build
-      - name: Compila o(s) projeto(s)
+      
+      - name: Compila o projeto backend
         shell: bash
         run: |
           cd build/ci_cd_projeto/backend
           npm install
           npm run build
-      - name: Compacta(Zip) buid
+      
+      - name: Executar os testes automatizados
         shell: bash
         run: |
           cd build/ci_cd_projeto/backend
-          zip -r backend.zip dist
-      - name: Upload Zip Backend
+          npm run test:cov
+      
+      - name: Upload Backend
         uses: actions/upload-artifact@v4
         with:
           name: backend
-          path: build/ci_cd_projeto/backend/backend.zip
+          path: build/ci_cd_projeto/backend/dist
+
   build_front:
     name: Build Front
     needs: [GerarVersao]
@@ -95,41 +103,63 @@ jobs:
         with:
           repository: ${{ github.repository }}
           path: build
-      - name: Compila o(s) projeto(s)
+      
+      - name: Compila o projeto frontend
         shell: bash
         run: |
           cd build/ci_cd_projeto/frontend
           npm install
           npm run build
-      - name: Compacta(Zip) buid
-        shell: bash
-        run: |
-          cd build/ci_cd_projeto/frontend
-          zip -r frontend.zip dist
-      - name: Upload Zip Frontend
+      
+      - name: Upload Frontend
         uses: actions/upload-artifact@v4
         with:
           name: frontend
-          path: build/ci_cd_projeto/frontend/frontend.zip
-  empacotar:
-    name: Empacotar
-    needs: [build_back, build_front, GerarVersao]
+          path: build/ci_cd_projeto/frontend/dist
+
+  sonarqube:
+    name: SonarQube
+    needs: [build_front, build_back]
     runs-on: ubuntu-latest
     steps:
-      - name: Download Zip Frontend
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  empacotar:
+    name: Empacotar
+    needs: [build_back, build_front, GerarVersao, sonarqube]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Frontend
         uses: actions/download-artifact@v4
         with:
           name: frontend
-      - name: Download Zip Backend
+          path: frontend
+      
+      - name: Download Backend
         uses: actions/download-artifact@v4
         with:
-         name: backend
+          name: backend
+          path: backend
+      
+      - name: Criar arquivos ZIP
+        shell: bash
+        run: |
+          zip -r backend.zip backend/
+          zip -r frontend.zip frontend/
+      
       - name: Criar Versão / Release e Tag
         uses: softprops/action-gh-release@v2
         env:
-         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-         body: Release ${{ needs.GerarVersao.outputs.versao }}
-         tag_name: ${{ needs.GerarVersao.outputs.versao }}
-         fail_on_unmatched_files: false
-         files: backend.zip,frontend.zip
+          body: Release ${{ needs.GerarVersao.outputs.versao }}
+          tag_name: ${{ needs.GerarVersao.outputs.versao }}
+          fail_on_unmatched_files: true
+          files: backend.zip,frontend.zip
